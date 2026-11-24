@@ -1,0 +1,51 @@
+name: upstream-merge
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Stable tag yang akan di-merge'
+        required: true
+        default: 'v5.10.275'
+      branch:
+        description: 'Branch tujuan push'
+        required: true
+        default: 'android12-5.10'
+
+permissions:
+  contents: write
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "VoidPrjct CI"
+          git config user.email "voidprjcts@gmail.com"
+
+      - name: Fetch stable tag
+        run: |
+          git remote add stable https://github.com/gregkh/linux.git
+          git fetch --no-tags stable "refs/tags/${{ inputs.tag }}:refs/tags/${{ inputs.tag }}"
+          git log -1 --oneline "${{ inputs.tag }}"
+
+      - name: Merge
+        run: |
+          if git merge --no-edit "${{ inputs.tag }}"; then
+            echo "== merge bersih, ringkasan:"
+            git log -1 --stat | tail -5
+            git show --stat HEAD | head -12
+          else
+            echo "== KONFLIK di file berikut:"
+            git diff --name-only --diff-filter=U
+            exit 1
+          fi
+
+      - name: Push
+        run: git push origin "HEAD:refs/heads/${{ inputs.branch }}"
