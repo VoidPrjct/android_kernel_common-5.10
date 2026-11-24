@@ -50,6 +50,7 @@ jobs:
             git diff --name-only --diff-filter=U | tee "$GITHUB_WORKSPACE/conflicts.txt"
             git add -A
             git commit -m "WIP: merge ${{ inputs.tag }} (konflik belum selesai, marker dibiarkan)"
+          fi
 
       - name: Push bersih
         if: env.MERGE_CLEAN == 'yes'
