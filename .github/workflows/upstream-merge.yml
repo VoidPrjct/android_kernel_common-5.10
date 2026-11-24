@@ -7,9 +7,13 @@ on:
         required: true
         default: 'v5.10.275'
       branch:
-        description: 'Branch tujuan push'
+        description: 'Branch tujuan push (merge bersih)'
         required: true
         default: 'android12-5.10'
+      wip_branch:
+        description: 'Branch tujuan push (kalau ada konflik)'
+        required: true
+        default: 'wip/upstream-275'
 
 permissions:
   contents: write
@@ -40,12 +44,24 @@ jobs:
           if git merge --no-edit "${{ inputs.tag }}"; then
             echo "== merge bersih, ringkasan:"
             git log -1 --stat | tail -5
-            git show --stat HEAD | head -12
+            echo "MERGE_CLEAN=yes" >> "$GITHUB_ENV"
           else
             echo "== KONFLIK di file berikut:"
-            git diff --name-only --diff-filter=U
-            exit 1
-          fi
+            git diff --name-only --diff-filter=U | tee "$GITHUB_WORKSPACE/conflicts.txt"
+            git add -A
+            git commit -m "WIP: merge ${{ inputs.tag }} (konflik belum selesai, marker dibiarkan)"
 
-      - name: Push
+      - name: Push bersih
+        if: env.MERGE_CLEAN == 'yes'
         run: git push origin "HEAD:refs/heads/${{ inputs.branch }}"
+
+      - name: Push WIP (konflik)
+        if: env.MERGE_CLEAN != 'yes'
+        run: git push origin "HEAD:refs/heads/${{ inputs.wip_branch }}"
+
+      - name: Upload daftar konflik
+        if: env.MERGE_CLEAN != 'yes'
+        uses: actions/upload-artifact@v4
+        with:
+          name: conflicts
+          path: conflicts.txt
