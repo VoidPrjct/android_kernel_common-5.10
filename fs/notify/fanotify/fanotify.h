@@ -40,21 +40,8 @@ struct fanotify_info {
 	/* size of dir_fh/file_fh including fanotify_fh hdr size */
 	u8 dir_fh_totlen;
 	u8 file_fh_totlen;
-<<<<<<< HEAD
 	u8 name_len;
 	u8 pad;
-=======
-	u8 pad;
-	/*
-	 * Deliberately not limited to NAME_MAX: some filesystems return longer
-	 * names (vfat up to 255 UTF-16 characters, as Windows allows, which is
-	 * up to 765 bytes of UTF-8; FUSE up to PATH_MAX - 1), and readdir() and
-	 * inotify report them in full. Only names of PATH_MAX bytes or more,
-	 * which no path can refer to, are dropped.
-	 */
-	u16 name_len;
-	u16 name2_len;
->>>>>>> v5.10.275
 	unsigned char buf[];
 	/*
 	 * (struct fanotify_fh) dir_fh starts at buf[0]
@@ -123,12 +110,6 @@ static inline const char *fanotify_info_name(struct fanotify_info *info)
 
 static inline void fanotify_info_init(struct fanotify_info *info)
 {
-<<<<<<< HEAD
-=======
-	BUILD_BUG_ON(FANOTIFY_FH_HDR_LEN + MAX_HANDLE_SZ > U8_MAX);
-	BUILD_BUG_ON(PATH_MAX > U16_MAX);
-
->>>>>>> v5.10.275
 	info->dir_fh_totlen = 0;
 	info->file_fh_totlen = 0;
 	info->name_len = 0;
@@ -137,24 +118,9 @@ static inline void fanotify_info_init(struct fanotify_info *info)
 static inline void fanotify_info_copy_name(struct fanotify_info *info,
 					   const struct qstr *name)
 {
-<<<<<<< HEAD
 	info->name_len = name->len;
 	strcpy(info->buf + info->dir_fh_totlen + info->file_fh_totlen,
 	       name->name);
-=======
-	if (WARN_ON_ONCE(info->name2_len > 0))
-		return;
-
-	info->name_len = name->len;
-	strcpy(fanotify_info_name(info), name->name);
-}
-
-static inline void fanotify_info_copy_name2(struct fanotify_info *info,
-					    const struct qstr *name)
-{
-	info->name2_len = name->len;
-	strcpy(fanotify_info_name2(info), name->name);
->>>>>>> v5.10.275
 }
 
 /*

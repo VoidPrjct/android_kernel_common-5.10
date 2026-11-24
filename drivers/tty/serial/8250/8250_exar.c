@@ -167,13 +167,9 @@ struct exar8250;
 
 struct exar8250_platform {
 	int (*rs485_config)(struct uart_port *, struct serial_rs485 *);
-<<<<<<< HEAD
-	int (*register_gpio)(struct pci_dev *, struct uart_8250_port *);
-=======
 	const struct serial_rs485 *rs485_supported;
 	int (*register_gpio)(struct exar8250 *priv, struct pci_dev *pcidev,
 			     struct uart_8250_port *port);
->>>>>>> v5.10.275
 };
 
 /**

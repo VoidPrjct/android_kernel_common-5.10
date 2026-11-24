@@ -2115,11 +2115,8 @@ static unsigned long unmapped_area_topdown(struct vm_unmapped_area_info *info)
 	struct mm_struct *mm = current->mm;
 	struct vm_area_struct *vma;
 	unsigned long length, low_limit, high_limit, gap_start, gap_end;
-<<<<<<< HEAD
 	unsigned long addr = 0;
-=======
 	unsigned long min_addr = max(info->low_limit, mmap_min_addr);
->>>>>>> v5.10.275
 
 	/* Adjust search length to account for worst case alignment overhead */
 	length = info->length + info->align_mask;

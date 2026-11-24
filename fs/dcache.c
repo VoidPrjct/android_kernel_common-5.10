@@ -3057,9 +3057,6 @@ out:
 	__d_add(dentry, inode, ops);
 	return NULL;
 }
-<<<<<<< HEAD
-EXPORT_SYMBOL_NS(d_splice_alias, ANDROID_GKI_VFS_EXPORT_ONLY);
-=======
 
 /**
  * d_splice_alias - splice a disconnected dentry into the tree if one exists
@@ -3088,8 +3085,7 @@ struct dentry *d_splice_alias(struct inode *inode, struct dentry *dentry)
 {
 	return d_splice_alias_ops(inode, dentry, NULL);
 }
-EXPORT_SYMBOL(d_splice_alias);
->>>>>>> v5.10.275
+EXPORT_SYMBOL_NS(d_splice_alias, ANDROID_GKI_VFS_EXPORT_ONLY);
 
 /*
  * Test whether new_dentry is a subdirectory of old_dentry.

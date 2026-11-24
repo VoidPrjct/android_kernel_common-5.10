@@ -1275,23 +1275,6 @@ int begin_new_exec(struct linux_binprm * bprm)
 	if (retval)
 		goto out;
 
-<<<<<<< HEAD
-=======
-	/*
-	 * This must be done here to ensure that POSIX CPU timers which were
-	 * armed on the current task are dequeued from me::posix_cputimers.
-	 * Otherwise in case of a TID switch the deletion of the related POSIX
-	 * timer would not remove an enqueued timer because the TID lookup
-	 * of the old TID fails.
-	 */
-	posixtimer_exec(me);
-
-	/* Ensure the files table is not shared. */
-	retval = unshare_files();
-	if (retval)
-		goto out;
-
->>>>>>> v5.10.275
 	/*
 	 * We have to apply CLOEXEC before we change whether the process is
 	 * dumpable (in setup_new_exec) to avoid a race with a process in userspace

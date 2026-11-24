@@ -1896,13 +1896,8 @@ static __be32
 nfsd4_vbuf_from_vector(struct nfsd4_compoundargs *argp, struct kvec *head,
 		       struct page **pages, char **bufp, u32 buflen)
 {
-<<<<<<< HEAD
 	char *tmp, *dp;
 	u32 len;
-=======
-	struct kvec *head = xdr->head;
-	char *tmp;
->>>>>>> v5.10.275
 
 	if (buflen <= head->iov_len) {
 		/*
@@ -1917,8 +1912,19 @@ nfsd4_vbuf_from_vector(struct nfsd4_compoundargs *argp, struct kvec *head,
 	if (tmp == NULL)
 		return nfserr_jukebox;
 
-	if (read_bytes_from_xdr_buf(xdr, 0, tmp, buflen))
-		return nfserr_bad_xdr;
+	dp = tmp;
+	memcpy(dp, head->iov_base, head->iov_len);
+	buflen -= head->iov_len;
+	dp += head->iov_len;
+
+	while (buflen > 0) {
+		len = min_t(u32, buflen, PAGE_SIZE);
+		memcpy(dp, page_address(*pages), len);
+
+		buflen -= len;
+		dp += len;
+		pages++;
+	}
 
 	*bufp = tmp;
 	return 0;
@@ -2036,11 +2042,7 @@ nfsd4_decode_setxattr(struct nfsd4_compoundargs *argp,
 		    &setxattr->setxa_buf, size);
 	}
 
-<<<<<<< HEAD
 	DECODE_TAIL;
-=======
-	return status;
->>>>>>> v5.10.275
 }
 
 static __be32
@@ -4832,7 +4834,7 @@ nfsd4_vbuf_to_stream(struct xdr_stream *xdr, char *buf, u32 buflen)
 	if (!p)
 		return nfserr_resource;
 
-	xdr_encode_opaque_fixed(p, buf, cplen);
+	memcpy(p, buf, cplen);
 	buf += cplen;
 	buflen -= cplen;
 
@@ -5347,7 +5349,8 @@ nfs4svc_encode_compoundres(struct svc_rqst *rqstp, __be32 *p)
 
 	p = resp->tagp;
 	*p++ = htonl(resp->taglen);
-	p = xdr_encode_opaque_fixed(p, resp->tag, resp->taglen);
+	memcpy(p, resp->tag, resp->taglen);
+	p += XDR_QUADLEN(resp->taglen);
 	*p++ = htonl(resp->opcnt);
 
 	nfsd4_sequence_done(resp);
