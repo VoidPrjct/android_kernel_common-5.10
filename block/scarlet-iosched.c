@@ -129,7 +129,11 @@ static unsigned int scarlet_domain_of_rq(struct request *rq)
 		return SCARLET_OTHER;
 	if (op_is_discard(rq->cmd_flags))
 		return SCARLET_DISCARD;
-	if (req_op(rq) == REQ_OP_WRITE)
+	/*
+	 * op_is_write() also covers WRITE_ZEROES and ZONE_APPEND, which would
+	 * otherwise be treated as reads and get read priority.
+	 */
+	if (op_is_write(req_op(rq)))
 		return SCARLET_WRITE;
 	return SCARLET_READ;
 }
@@ -280,18 +284,32 @@ static void scarlet_insert_request(struct request_queue *q, struct request *rq,
 
 	lockdep_assert_held(&sd->lock);
 
-	if (at_head) {
-		list_add(&rq->queuelist, &dom->fifo);
+	/*
+	 * rq->fifo_time is garbage on a fresh request (blk-mq only clears
+	 * rq->deadline), so it must be written on every path. An at_head request
+	 * is overdue by definition: expire it now so it is served first.
+	 */
+	if (at_head)
 		rq->fifo_time = jiffies;
-	} else {
-		list_add_tail(&rq->queuelist, &dom->fifo);
+	else
 		rq->fifo_time = scarlet_expire_for(domain);
 
-		if (rq_mergeable(rq)) {
-			elv_rqhash_add(q, rq);
-			if (!q->last_merge)
-				q->last_merge = rq;
-		}
+	if (at_head)
+		list_add(&rq->queuelist, &dom->fifo);
+	else
+		list_add_tail(&rq->queuelist, &dom->fifo);
+
+	/*
+	 * Hash every mergeable request so __blk_mq_sched_bio_merge() can find
+	 * it. An at_head request may already be in the hash when it is
+	 * reinserted after a failed dispatch, and elv_rqhash_add() BUG_ONs on
+	 * that, so remove the stale entry first.
+	 */
+	if (rq_mergeable(rq)) {
+		elv_rqhash_del(q, rq);
+		elv_rqhash_add(q, rq);
+		if (!q->last_merge)
+			q->last_merge = rq;
 	}
 
 	if (!timer_pending(&sd->timer) ||
@@ -367,6 +385,8 @@ static struct request *scarlet_dispatch_from(struct scarlet_data *sd,
 	int i, start;
 
 	lockdep_assert_held(&sd->lock);
+
+	scarlet_latency_maybe_update(sd);
 
 	/*
 	 * Keep feeding the current domain until its batch is used up, so
@@ -499,12 +519,21 @@ static void scarlet_completed_request(struct request *rq, u64 now)
 	}
 	atomic_inc(&cl->buckets[domain][bucket]);
 	put_cpu_ptr(cl);
+}
 
-	/* Fold samples at most every 100 ms. */
-	if (time_after(jiffies, sd->last_latency_update + HZ / 10)) {
-		sd->last_latency_update = jiffies;
-		scarlet_latency_update(sd);
-	}
+/*
+ * Fold the histograms and adapt the batch size under @sd->lock. Called from
+ * the insertion path only: the completion path runs in softirq context, where
+ * walking every CPU is too expensive.
+ */
+static void scarlet_latency_maybe_update(struct scarlet_data *sd)
+{
+	/* Fold at most every 100 ms. */
+	if (!time_after(jiffies, sd->last_latency_update + HZ / 10))
+		return;
+
+	sd->last_latency_update = jiffies;
+	scarlet_latency_update(sd);
 }
 
 /* ---- sysfs ---- */
@@ -542,8 +571,14 @@ static ssize_t scarlet_async_depth_store(struct elevator_queue *e,
 
 	if (kstrtouint(page, 10, &val))
 		return -EINVAL;
+	/*
+	 * Never below the queue's minimum shallow depth: the tag allocator warns
+	 * (and then ignores the limit) for smaller values, which would stall
+	 * asynchronous I/O instead of shaping it.
+	 */
 	if (val < 1 || val > sd->queue->nr_requests)
 		return -EINVAL;
+	val = min_t(unsigned int, val, sd->queue->nr_requests);
 	sd->async_depth = val;
 	return count;
 }

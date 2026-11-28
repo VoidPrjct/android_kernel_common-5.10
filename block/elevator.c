@@ -731,38 +731,6 @@ int elevator_switch(struct request_queue *q, struct elevator_type *new_e)
 /*
  * Switch this queue to the given IO scheduler.
  */
-static int __elevator_change(struct request_queue *q, const char *name)
-{
-	char elevator_name[ELV_NAME_MAX];
-	struct elevator_type *e;
-
-	/* Make sure queue is not in the middle of being removed */
-	if (!blk_queue_registered(q))
-		return -ENOENT;
-
-	/*
-	 * Special case for mq, turn off scheduling
-	 */
-	if (!strncmp(name, "none", 4)) {
-		if (!q->elevator)
-			return 0;
-		return elevator_switch(q, NULL);
-	}
-
-	strlcpy(elevator_name, name, sizeof(elevator_name));
-	e = elevator_get(q, strstrip(elevator_name), true);
-	if (!e)
-		return -EINVAL;
-
-	if (q->elevator &&
-	    elevator_match(q->elevator->type, elevator_name, 0)) {
-		elevator_put(e);
-		return 0;
-	}
-
-	return elevator_switch(q, e);
-}
-
 #ifdef CONFIG_IOSCHED_SCARLET_LOCK
 /*
  * Scarlet is locked as the only scheduler this kernel may use. The lock is on
@@ -787,6 +755,57 @@ static int __init scarlet_lock_setup(char *str)
 __setup("scarlet_iosched=", scarlet_lock_setup);
 #endif
 
+static int __elevator_change(struct request_queue *q, const char *name)
+{
+	char elevator_name[ELV_NAME_MAX];
+	struct elevator_type *e;
+
+	/* Make sure queue is not in the middle of being removed */
+	if (!blk_queue_registered(q))
+		return -ENOENT;
+
+#ifdef CONFIG_IOSCHED_SCARLET_LOCK
+	/*
+	 * Scarlet is the only scheduler this kernel allows. Reject every other
+	 * name -- "none" included -- so no queue can be left without it. The
+	 * write fails with EPERM instead of being silently ignored, which keeps
+	 * the value in sysfs matching what the queue actually uses.
+	 */
+	if (scarlet_locked) {
+		char wanted[ELV_NAME_MAX];
+		const char *want;
+
+		strlcpy(wanted, name, sizeof(wanted));
+		want = strstrip(wanted);
+		if (strcmp(want, "scarlet"))
+			return -EPERM;
+	}
+#endif
+
+	/*
+	 * Special case for mq, turn off scheduling
+	 */
+	if (!strncmp(name, "none", 4)) {
+		if (!q->elevator)
+			return 0;
+		return elevator_switch(q, NULL);
+	}
+
+	strlcpy(elevator_name, name, sizeof(elevator_name));
+	e = elevator_get(q, strstrip(elevator_name), true);
+	if (!e)
+		return -EINVAL;
+
+	if (q->elevator &&
+	    elevator_match(q->elevator->type, elevator_name, 0)) {
+		elevator_put(e);
+		return 0;
+	}
+
+	return elevator_switch(q, e);
+}
+
+
 ssize_t elv_iosched_store(struct request_queue *q, const char *name,
 			  size_t count)
 {
@@ -794,18 +813,6 @@ ssize_t elv_iosched_store(struct request_queue *q, const char *name,
 
 	if (!elv_support_iosched(q))
 		return count;
-
-#ifdef CONFIG_IOSCHED_SCARLET_LOCK
-	/*
-	 * Reject the write instead of silently ignoring it: anything that tries
-	 * to change the scheduler learns that the policy is fixed, and the
-	 * value in the file keeps matching what the queue actually uses.
-	 */
-	if (scarlet_locked && q->elevator && q->elevator->type &&
-	    !strcmp(q->elevator->type->elevator_name, "scarlet") &&
-	    strncmp(name, "scarlet", strlen("scarlet")))
-		return -EPERM;
-#endif
 
 	ret = __elevator_change(q, name);
 	if (!ret)
