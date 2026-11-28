@@ -377,6 +377,67 @@ static struct request *scarlet_dequeue(struct scarlet_data *sd,
 	return rq;
 }
 
+/* ---- latency-driven batch size ---- */
+
+static void scarlet_latency_update(struct scarlet_data *sd)
+{
+	u64 good[SCARLET_LATENCY_DOMAINS] = {0};
+	u64 bad[SCARLET_LATENCY_DOMAINS] = {0};
+	int cpu, d, b;
+
+	for_each_possible_cpu(cpu) {
+		struct scarlet_cpu_latency *cl = per_cpu_ptr(sd->cpu_latency, cpu);
+
+		for (d = 0; d < SCARLET_LATENCY_DOMAINS; d++) {
+			for (b = 0; b < SCARLET_LATENCY_BUCKETS; b++) {
+				int v = atomic_xchg(&cl->buckets[d][b], 0);
+
+				if (b < SCARLET_GOOD_BUCKETS)
+					good[d] += v;
+				else
+					bad[d] += v;
+			}
+		}
+	}
+
+	spin_lock(&sd->lock);
+	for (d = 0; d < SCARLET_LATENCY_DOMAINS; d++) {
+		u64 total = good[d] + bad[d];
+		unsigned int nb = sd->batch[d];
+
+		if (!total)
+			continue;
+
+		/*
+		 * More than half the samples missed the target: shorten the
+		 * batch so the other domains get a turn sooner. Otherwise grow
+		 * back towards the maximum, which keeps sequential throughput.
+		 */
+		if (div64_u64(bad[d] * 100, total) > 50)
+			nb = max_t(unsigned int, nb >> 1, 1);
+		else if (nb < scarlet_max_batch[d])
+			nb++;
+
+		sd->batch[d] = nb;
+	}
+	spin_unlock(&sd->lock);
+}
+
+/*
+ * Fold the histograms and adapt the batch size under @sd->lock. Called from
+ * the insertion path only: the completion path runs in softirq context, where
+ * walking every CPU is too expensive.
+ */
+static void scarlet_latency_maybe_update(struct scarlet_data *sd)
+{
+	/* Fold at most every 100 ms. */
+	if (!time_after(jiffies, sd->last_latency_update + HZ / 10))
+		return;
+
+	sd->last_latency_update = jiffies;
+	scarlet_latency_update(sd);
+}
+
 static struct request *scarlet_dispatch_from(struct scarlet_data *sd,
 					     unsigned int *domain_out)
 {
@@ -449,50 +510,6 @@ static struct request *scarlet_dispatch_request(struct blk_mq_hw_ctx *hctx)
 
 /* ---- latency sampling and adaptive batching ---- */
 
-static void scarlet_latency_update(struct scarlet_data *sd)
-{
-	u64 good[SCARLET_LATENCY_DOMAINS] = {0};
-	u64 bad[SCARLET_LATENCY_DOMAINS] = {0};
-	int cpu, d, b;
-
-	for_each_possible_cpu(cpu) {
-		struct scarlet_cpu_latency *cl = per_cpu_ptr(sd->cpu_latency, cpu);
-
-		for (d = 0; d < SCARLET_LATENCY_DOMAINS; d++) {
-			for (b = 0; b < SCARLET_LATENCY_BUCKETS; b++) {
-				int v = atomic_xchg(&cl->buckets[d][b], 0);
-
-				if (b < SCARLET_GOOD_BUCKETS)
-					good[d] += v;
-				else
-					bad[d] += v;
-			}
-		}
-	}
-
-	spin_lock(&sd->lock);
-	for (d = 0; d < SCARLET_LATENCY_DOMAINS; d++) {
-		u64 total = good[d] + bad[d];
-		unsigned int nb = sd->batch[d];
-
-		if (!total)
-			continue;
-
-		/*
-		 * More than half the samples missed the target: shorten the
-		 * batch so the other domains get a turn sooner. Otherwise grow
-		 * back towards the maximum, which keeps sequential throughput.
-		 */
-		if (div64_u64(bad[d] * 100, total) > 50)
-			nb = max_t(unsigned int, nb >> 1, 1);
-		else if (nb < scarlet_max_batch[d])
-			nb++;
-
-		sd->batch[d] = nb;
-	}
-	spin_unlock(&sd->lock);
-}
-
 static void scarlet_completed_request(struct request *rq, u64 now)
 {
 	struct request_queue *q = rq->q;
@@ -519,21 +536,6 @@ static void scarlet_completed_request(struct request *rq, u64 now)
 	}
 	atomic_inc(&cl->buckets[domain][bucket]);
 	put_cpu_ptr(cl);
-}
-
-/*
- * Fold the histograms and adapt the batch size under @sd->lock. Called from
- * the insertion path only: the completion path runs in softirq context, where
- * walking every CPU is too expensive.
- */
-static void scarlet_latency_maybe_update(struct scarlet_data *sd)
-{
-	/* Fold at most every 100 ms. */
-	if (!time_after(jiffies, sd->last_latency_update + HZ / 10))
-		return;
-
-	sd->last_latency_update = jiffies;
-	scarlet_latency_update(sd);
 }
 
 /* ---- sysfs ---- */
