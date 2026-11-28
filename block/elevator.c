@@ -617,18 +617,25 @@ static inline bool elv_support_iosched(struct request_queue *q)
 }
 
 /*
- * For single queue devices, default to using mq-deadline. If we have multiple
- * queues or mq-deadline is not available, default to "none".
+ * Scarlet is the default I/O scheduler on this kernel. Upstream only applies
+ * a default when the device has a single hardware queue, which leaves
+ * multi-queue devices (UFS, NVMe) with no scheduler at all -- exactly where a
+ * scheduler matters most. With CONFIG_IOSCHED_SCARLET_DEFAULT the default is
+ * applied to every queue, and "none" is only used when Scarlet is not built.
  */
 static struct elevator_type *elevator_get_default(struct request_queue *q)
 {
 	if (q->tag_set && q->tag_set->flags & BLK_MQ_F_NO_SCHED_BY_DEFAULT)
 		return NULL;
 
+#ifdef CONFIG_IOSCHED_SCARLET_DEFAULT
+	return elevator_get(q, "scarlet", false);
+#else
 	if (q->nr_hw_queues != 1)
 		return NULL;
 
-	return elevator_get(q, "adios", false);
+	return elevator_get(q, "scarlet", false);
+#endif
 }
 
 /*
@@ -756,6 +763,30 @@ static int __elevator_change(struct request_queue *q, const char *name)
 	return elevator_switch(q, e);
 }
 
+#ifdef CONFIG_IOSCHED_SCARLET_LOCK
+/*
+ * Scarlet is locked as the only scheduler this kernel may use. The lock is on
+ * by default (CONFIG_IOSCHED_SCARLET_LOCK) and can be released at boot with
+ * scarlet_iosched=nolock on the kernel command line or in bootconfig.
+ */
+static bool scarlet_locked = true;
+
+static int __init scarlet_lock_setup(char *str)
+{
+	if (!str)
+		return 1;
+
+	if (!strcmp(str, "0") || !strcmp(str, "off") || !strcmp(str, "nolock"))
+		scarlet_locked = false;
+	else if (!strcmp(str, "1") || !strcmp(str, "on") ||
+		 !strcmp(str, "lock"))
+		scarlet_locked = true;
+
+	return 1;
+}
+__setup("scarlet_iosched=", scarlet_lock_setup);
+#endif
+
 ssize_t elv_iosched_store(struct request_queue *q, const char *name,
 			  size_t count)
 {
@@ -763,6 +794,18 @@ ssize_t elv_iosched_store(struct request_queue *q, const char *name,
 
 	if (!elv_support_iosched(q))
 		return count;
+
+#ifdef CONFIG_IOSCHED_SCARLET_LOCK
+	/*
+	 * Reject the write instead of silently ignoring it: anything that tries
+	 * to change the scheduler learns that the policy is fixed, and the
+	 * value in the file keeps matching what the queue actually uses.
+	 */
+	if (scarlet_locked && q->elevator && q->elevator->type &&
+	    !strcmp(q->elevator->type->elevator_name, "scarlet") &&
+	    strncmp(name, "scarlet", strlen("scarlet")))
+		return -EPERM;
+#endif
 
 	ret = __elevator_change(q, name);
 	if (!ret)
